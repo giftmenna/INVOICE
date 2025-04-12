@@ -14,6 +14,7 @@ interface InvoiceDetails {
   invoiceNumber: string;
   date: string;
   dueDate: string;
+  stampDate: string; // New field for custom stamp date
   paymentTerms: string;
 }
 
@@ -26,7 +27,7 @@ interface BillTo {
 interface InvoiceItem {
   description: string;
   quantity: number;
-  price: number;
+  price: string;
 }
 
 interface InvoiceStyle {
@@ -40,8 +41,22 @@ interface InvoiceStyle {
   bgBottomAccentColor: string;
 }
 
+// Utility functions for comma formatting
+const formatNumberWithCommas = (number: number): string => {
+  if (isNaN(number)) return '0.00';
+  return number.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
+
+const parseCommaNumber = (value: string): number => {
+  if (!value || value.trim() === '') return 0;
+  const cleaned = value.replace(/,/g, '');
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 function App() {
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [businessDetails, setBusinessDetails] = useState<BusinessDetails>({
     logo: null,
     name: '',
@@ -54,6 +69,7 @@ function App() {
     invoiceNumber: '',
     date: new Date().toISOString().split('T')[0],
     dueDate: '',
+    stampDate: '', // Initialize as empty
     paymentTerms: 'Due on Receipt',
   });
 
@@ -64,10 +80,11 @@ function App() {
   });
 
   const [items, setItems] = useState<InvoiceItem[]>([
-    { description: '', quantity: 0, price: 0 },
+    { description: '', quantity: 0, price: '' },
   ]);
 
   const [taxRate, setTaxRate] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [style, setStyle] = useState<InvoiceStyle>({
     fontFamily: 'sans-serif',
@@ -88,11 +105,48 @@ function App() {
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (!file.type.startsWith('image/')) {
+        setUploadError('Please upload a valid image file (e.g., PNG, JPEG).');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadError('Image file size must be less than 5MB.');
+        return;
+      }
+      setUploadError(null);
       setBusinessDetails((prev) => ({
         ...prev,
         logo: URL.createObjectURL(file),
       }));
     }
+  };
+
+  const handleLogoDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        setUploadError('Please drop a valid image file (e.g., PNG, JPEG).');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadError('Image file size must be less than 5MB.');
+        return;
+      }
+      setUploadError(null);
+      setBusinessDetails((prev) => ({
+        ...prev,
+        logo: URL.createObjectURL(file),
+      }));
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
   };
 
   const handleInvoiceChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -111,10 +165,23 @@ function App() {
   ) => {
     const { name, value } = e.target;
     const updatedItems = [...items];
-    updatedItems[index] = {
-      ...updatedItems[index],
-      [name]: name === 'description' ? value : parseFloat(value) || 0,
-    };
+    if (name === 'price') {
+      const formattedValue = value.replace(/[^0-9,.]/g, '');
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [name]: formattedValue,
+      };
+    } else if (name === 'quantity') {
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [name]: parseInt(value) || 0,
+      };
+    } else {
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [name]: value,
+      };
+    }
     setItems(updatedItems);
   };
 
@@ -126,19 +193,22 @@ function App() {
   };
 
   const addItem = () => {
-    setItems([...items, { description: '', quantity: 0, price: 0 }]);
+    setItems([...items, { description: '', quantity: 0, price: '' }]);
   };
 
-  const calculateSubtotal = () => {
-    return items.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const calculateSubtotal = (): number => {
+    return items.reduce((sum, item) => {
+      const price = parseCommaNumber(item.price);
+      return sum + item.quantity * price;
+    }, 0);
   };
 
-  const calculateTax = () => {
+  const calculateTax = (): number => {
     return calculateSubtotal() * taxRate;
   };
 
-  const calculateGrandTotal = () => {
-    return (calculateSubtotal() + calculateTax()).toFixed(2);
+  const calculateGrandTotal = (): number => {
+    return calculateSubtotal() + calculateTax();
   };
 
   const downloadInvoice = async () => {
@@ -160,6 +230,29 @@ function App() {
       const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}&attachment=${encodeURIComponent(image)}`;
       window.open(whatsappUrl, '_blank');
     }
+  };
+
+  // Format stamp date
+  const getStampDate = (): string => {
+    if (invoiceDetails.stampDate) {
+      return new Date(invoiceDetails.stampDate).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    }
+    if (invoiceDetails.date) {
+      return new Date(invoiceDetails.date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    }
+    return new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
   };
 
   return (
@@ -293,20 +386,44 @@ function App() {
                 <h2 className="text-xl font-semibold">Business Details</h2>
               </div>
               <div className="space-y-4">
-                <label className="block">
-                  <span className="text-sm font-medium text-gray-700">Logo</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLogoChange}
-                    className="mt-1 block w-full text-sm text-gray-500
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-full file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-blue-50 file:text-blue-700
-                      hover:file:bg-blue-100"
-                  />
-                </label>
+                <div
+                  className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center"
+                  onDrop={handleLogoDrop}
+                  onDragOver={handleDragOver}
+                >
+                  <label className="block">
+                    <span className="text-sm font-medium text-gray-700">Logo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={fileInputRef}
+                      onChange={handleLogoChange}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={triggerFileInput}
+                      className="mt-2 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Choose Image
+                    </button>
+                    <p className="mt-2 text-sm text-gray-500">
+                      or drag and drop an image here
+                    </p>
+                    {uploadError && (
+                      <p className="mt-2 text-sm text-red-600">{uploadError}</p>
+                    )}
+                    {businessDetails.logo && (
+                      <div className="mt-4">
+                        <img
+                          src={businessDetails.logo}
+                          alt="Preview"
+                          className="w-24 h-24 object-contain mx-auto"
+                        />
+                      </div>
+                    )}
+                  </label>
+                </div>
                 <input
                   type="text"
                   name="name"
@@ -376,6 +493,16 @@ function App() {
                     />
                   </label>
                 </div>
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Stamp Date</span>
+                  <input
+                    type="date"
+                    name="stampDate"
+                    value={invoiceDetails.stampDate}
+                    onChange={handleInvoiceChange}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  />
+                </label>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
                     Payment Terms
@@ -449,10 +576,10 @@ function App() {
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <input
-                      type="number"
+                      type="text"
                       name="price"
                       placeholder="Price"
-                      value={item.price || ''}
+                      value={item.price}
                       onChange={(e) => handleItemChange(index, e)}
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
@@ -532,7 +659,7 @@ function App() {
                   )}
                   <h1 className="text-4xl font-bold text-white uppercase">Invoice</h1>
                   <p className="text-lg font-semibold text-black mt-2">
-                    <br></br>
+                    <br />
                     {businessDetails.name || 'Aldenaire & Partners'}
                   </p>
                   <p className="text-sm text-black">
@@ -579,9 +706,11 @@ function App() {
                             <tr key={index} className="border-b border-gray-200">
                               <td className="py-3 px-4">{item.description}</td>
                               <td className="py-3 px-4">{item.quantity}</td>
-                              <td className="py-3 px-4">${item.price.toFixed(2)}</td>
+                              <td className="py-3 px-4">
+                                ${formatNumberWithCommas(parseCommaNumber(item.price))}
+                              </td>
                               <td className="py-3 px-4 text-right">
-                                ${(item.quantity * item.price).toFixed(2)}
+                                ${formatNumberWithCommas(item.quantity * parseCommaNumber(item.price))}
                               </td>
                             </tr>
                           )
@@ -596,15 +725,15 @@ function App() {
                 <div className="space-y-2 text-right">
                   <div className="flex justify-between w-64">
                     <p className="font-medium">Subtotal:</p>
-                    <p>${calculateSubtotal().toFixed(2)}</p>
+                    <p>${formatNumberWithCommas(calculateSubtotal())}</p>
                   </div>
                   <div className="flex justify-between w-64">
                     <p className="font-medium">Tax ({(taxRate * 100).toFixed(1)}%):</p>
-                    <p>${calculateTax().toFixed(2)}</p>
+                    <p>${formatNumberWithCommas(calculateTax())}</p>
                   </div>
                   <div className="flex justify-between w-64 text-lg font-semibold">
                     <p>Total:</p>
-                    <p>${calculateGrandTotal()}</p>
+                    <p>${formatNumberWithCommas(calculateGrandTotal())}</p>
                   </div>
                 </div>
               </div>
@@ -654,11 +783,9 @@ function App() {
                   </p>
                 </div>
                 <div className="flex items-end space-x-4">
-                  {/* Stamp */}
                   <div className="relative w-32 h-32 rounded-full bg-white border-2 border-gray-400 flex items-center justify-center">
                     <div className="absolute inset-0 flex items-center justify-center">
                       <svg className="w-full h-full" viewBox="0 0 100 100">
-                        {/* Outer circle with company name */}
                         <path
                           id="circlePath"
                           d="M 50, 50 m -45, 0 a 45,45 0 1,1 90,0 a 45,45 0 1,1 -90,0"
@@ -669,12 +796,10 @@ function App() {
                             {businessDetails.name.toUpperCase() || 'ALDENAIRE & PARTNERS'}
                           </textPath>
                         </text>
-                        {/* Inner design - small stars */}
                         <circle cx="50" cy="10" r="2" fill="black" />
                         <circle cx="50" cy="90" r="2" fill="black" />
                         <circle cx="10" cy="50" r="2" fill="black" />
                         <circle cx="90" cy="50" r="2" fill="black" />
-                        {/* Logo text in center */}
                         <text
                           x="50"
                           y="45"
@@ -683,19 +808,17 @@ function App() {
                         >
                           {businessDetails.name ? businessDetails.name.charAt(0) : 'A&P'}
                         </text>
-                        {/* Date below logo */}
                         <text
                           x="50"
                           y="65"
                           textAnchor="middle"
                           className="text-xs fill-black"
                         >
-                          {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                          {getStampDate()}
                         </text>
                       </svg>
                     </div>
                   </div>
-                  {/* Thank You and Signature */}
                   <div className="text-right">
                     <h3 className="text-2xl font-bold" style={{ color: style.bgBottomAccentColor }}>
                       Thank You!
@@ -713,4 +836,4 @@ function App() {
   );
 }
 
-export default App;       
+export default App;
